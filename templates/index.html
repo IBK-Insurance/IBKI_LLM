@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama LLM Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .chat-container {
+            height: calc(100vh - 200px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-center mb-8">IBKI Local LLM Chat</h1>
+        
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div id="chat-messages" class="chat-container overflow-y-auto mb-4 p-4 border rounded-lg">
+                <!-- Messages will appear here -->
+            </div>
+            
+            <form id="chat-form" class="flex gap-2">
+                <input type="text" id="user-input" 
+                       class="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="Type your message here...">
+                <button type="submit" 
+                        class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    Send
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 세션 ID 생성
+        function generateSessionId() {
+            return 'session_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // 세션 ID 가져오기 또는 생성
+        function getSessionId() {
+            let sessionId = document.cookie.replace(/(?:(?:^|.*;\s*)session_id\s*=\s*([^;]*).*$)|^.*$/, "$1");
+            if (!sessionId) {
+                sessionId = generateSessionId();
+                document.cookie = `session_id=${sessionId}; path=/`;
+            }
+            return sessionId;
+        }
+
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+        const chatMessages = document.getElementById('chat-messages');
+
+        // 페이지 로드 시 세션 ID 설정
+        getSessionId();
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage('user', message);
+            userInput.value = '';
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `prompt=${encodeURIComponent(message)}`
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage('assistant', `Error: ${data.error}`);
+                } else {
+                    addMessage('assistant', data.response);
+                }
+            } catch (error) {
+                addMessage('assistant', `Error: ${error.message}`);
+            }
+        });
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `mb-4 p-3 rounded-lg ${
+                role === 'user' ? 'bg-blue-100 ml-auto' : 'bg-gray-100'
+            } max-w-[80%] ${role === 'user' ? 'ml-auto' : 'mr-auto'}`;
+            
+            // 메시지 내용을 줄바꿈 처리
+            const formattedContent = content.replace(/\n/g, '<br>');
+            messageDiv.innerHTML = formattedContent;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    </script>
+</body>
+</html> 
