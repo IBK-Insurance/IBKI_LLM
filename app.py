@@ -1,12 +1,14 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import requests
 import os
 from dotenv import load_dotenv
 from typing import List, Dict
 import json
+import asyncio
+import aiohttp
 
 load_dotenv()
 
@@ -27,26 +29,8 @@ DEFAULT_SYSTEM_PROMPT = """당신은 도움이 되는 AI 어시스턴트입니�
 
 너는 연금보험 설계 매니저야
  
-다음과 같은 특성을 가진 연금보험 상품의 가입설계를 해줘
- 
-* 상품목록
- 1. IBK프리미엄 연금보험 : 비과세, 예금자 보호
- 2. IBK하이브리드연금저축 : 세액공제, 예금자보호
- 3. IBK연금액 평생보증받는 변액연금 : 펀드 및 채권 운용, 특별계정
- 
-* 필수입력 사항
- 성별,나이
+필수입력 사항이 없는경우 사용자 입력을 반드시 요구하고 선택입력 사항이 없는경우 기본값으로 아래와 같은 형태로 답변해줘
 
-* 선택입력 사항
- 상품명(기본값 : IBK프리미엄 연금보험)
- 월보험료(기본값 : 30만원)
- 연금개시나이(기본값 : 80세)
- 납입기간(기본값 : 10년)
- 보증기간(기본값 : 100세)
- 보험료 할인방법(기본값 : 보험료 할인)
-  
-위의 내용을 참고하여 가입설계 결과는 아래와 같은 형태로만 답변해줘
- 
 ================================================
  * 상품명 : \n
  * 성별 : \n
@@ -57,6 +41,23 @@ DEFAULT_SYSTEM_PROMPT = """당신은 도움이 되는 AI 어시스턴트입니�
  * 보증기간 : xx년\n
  * 보험료 할인방법 : \n
  ================================================
+ 
+* 상품목록
+ IBK프리미엄 연금보험 : 비과세, 예금자 보호
+ IBK하이브리드연금저축 : 세액공제, 예금자보호, 연말정산
+ IBK연금액 평생보증받는 변액연금 : 펀드, 채권 운용, 증권
+ 
+* 필수입력 사항  
+ 성별
+ 나이
+ 
+* 선택입력 사항 
+ 상품명(기본값 : IBK프리미엄 연금보험)
+ 월보험료(기본값 : 30만원)
+ 연금개시나이(기본값 : 80세)
+ 납입기간(기본값 : 10년)
+ 보증기간(기본값 : 100세)
+ 보험료 할인방법(기본값 : 보험료 할인)
 
 한국어로 대화하며, 필요한 경우 영어나 다른 언어도 사용할 수 있습니다."""
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
@@ -79,12 +80,8 @@ def get_conversation_history(session_id: str) -> str:
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.post("/generate")
-async def generate_response(request: Request, prompt: str = Form(...)):
+async def generate_stream(session_id: str, prompt: str):
     try:
-        # 세션 ID 가져오기 (쿠키에서)
-        session_id = request.cookies.get("session_id", "default")
-        
         # 대화 기록이 없으면 초기화
         if session_id not in conversations:
             conversations[session_id] = []
@@ -103,29 +100,44 @@ async def generate_response(request: Request, prompt: str = Form(...)):
 
 Current user message: {prompt}"""
         
-        response = requests.post(
-            OLLAMA_API_URL,
-            json={
-                "model": "gemma3",
-                "prompt": full_prompt,
-                "stream": False
-            }
-        )
-        response.raise_for_status()
-        
-        # 응답 가져오기
-        assistant_response = response.json()["response"]
-        
-        # 어시스턴트 응답을 대화 기록에 추가
-        conversations[session_id].append({"role": "assistant", "content": assistant_response})
-        
-        # 대화 기록이 너무 길어지면 최근 10개만 유지
-        if len(conversations[session_id]) > 20:  # 10개의 대화 쌍
-            conversations[session_id] = conversations[session_id][-20:]
-        
-        return {"response": assistant_response}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                OLLAMA_API_URL,
+                json={
+                    "model": "gemma3",
+                    "prompt": full_prompt,
+                    "stream": True
+                }
+            ) as response:
+                full_response = ""
+                async for line in response.content:
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            token = data.get("response", "")
+                            full_response += token
+                            yield f"data: {json.dumps({'token': token})}\n\n"
+                        except json.JSONDecodeError:
+                            continue
+                
+                # 전체 응답을 대화 기록에 추가
+                conversations[session_id].append({"role": "assistant", "content": full_response})
+                
+                # 대화 기록이 너무 길어지면 최근 10개만 유지
+                if len(conversations[session_id]) > 20:
+                    conversations[session_id] = conversations[session_id][-20:]
+                
+                yield "data: [DONE]\n\n"
     except Exception as e:
-        return {"error": str(e)}
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+@app.post("/generate")
+async def generate_response(request: Request, prompt: str = Form(...)):
+    session_id = request.cookies.get("session_id", "default")
+    return StreamingResponse(
+        generate_stream(session_id, prompt),
+        media_type="text/event-stream"
+    )
 
 if __name__ == "__main__":
     import uvicorn
