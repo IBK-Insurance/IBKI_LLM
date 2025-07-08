@@ -1,150 +1,126 @@
+import streamlit as st
+from PIL import Image
+import io
+import base64
+import pandas as pd
+from PyPDF2 import PdfReader
+import docx
 import requests
-import json
-from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field
-import os
-from dotenv import load_dotenv
-from langchain.llms import Ollama
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from langchain.memory import ConversationBufferMemory
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming import StreamingStdOutCallbackHandler
 
-# 환경 변수 로드
-load_dotenv()
+# 개인정보 정의/예시
+PERSONAL_INFO_CONTEXT = """
+개인정보란 이름, 주민등록번호, 연락처, 이메일 등 개인을 식별할 수 있는 정보를 의미합니다.
+개인정보에는 주소, 전화번호, 계좌번호, 신용카드번호, 생년월일, 성별 등이 포함될 수 있습니다.
+개인정보 보호법에 따라 개인을 식별할 수 있는 모든 정보는 보호 대상입니다.
+개인정보의 예시: 김철수, 010-1234-5678, kim@email.com, 서울시 강남구, 123-45-67890
+개인정보가 아닌 것: 일반적인 직업명, 나이대, 지역명(시/도 단위), 성별 등
+"""
 
-class Message(BaseModel):
-    """대화 메시지 모델"""
-    role: str
-    content: str
+OLLAMA_API_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "qwen2.5vl:7b"
 
-class Conversation(BaseModel):
-    """대화 기록 모델"""
-    messages: List[Message] = Field(default_factory=list)
-    
-    def add_message(self, role: str, content: str) -> None:
-        """대화에 메시지 추가"""
-        self.messages.append(Message(role=role, content=content))
-    
-    def get_history(self) -> str:
-        """대화 기록을 문자열로 변환"""
-        history = ""
-        for msg in self.messages:
-            role = "사용자" if msg.role == "user" else "어시스턴트"
-            history += f"{role}: {msg.content}\n"
-        return history
-    
-    def truncate(self, max_messages: int = 20) -> None:
-        """대화 기록이 너무 길어지면 최근 메시지만 유지"""
-        if len(self.messages) > max_messages:
-            self.messages = self.messages[-max_messages:]
+def encode_image_to_base64(image):
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
 
-class OllamaClient:
-    """Ollama API 클라이언트"""
-    
-    def __init__(self, base_url: str = "http://localhost:11434"):
-        self.base_url = base_url
-        self.conversations: Dict[str, Conversation] = {}
-        self.callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
-        
-    def _get_conversation(self, session_id: str) -> Conversation:
-        """세션 ID에 해당하는 대화 기록 가져오기"""
-        if session_id not in self.conversations:
-            self.conversations[session_id] = Conversation()
-        return self.conversations[session_id]
-    
-    def generate(self, 
-                prompt: str, 
-                model: str = "gemma3", 
-                session_id: str = "default",
-                system_prompt: Optional[str] = None) -> str:
-        """
-        Ollama API를 통해 응답 생성
-        
-        Args:
-            prompt: 사용자 입력 프롬프트
-            model: 사용할 모델 이름
-            session_id: 대화 세션 ID
-            system_prompt: 시스템 프롬프트 (기본값: None)
-            
-        Returns:
-            생성된 응답 텍스트
-        """
-        # 대화 기록 가져오기
-        conversation = self._get_conversation(session_id)
-        
-        # 사용자 메시지 추가
-        conversation.add_message("user", prompt)
-        
-        # 전체 대화 컨텍스트 생성
-        context = conversation.get_history()
-        
-        # 기본 시스템 프롬프트 설정
-        if system_prompt is None:
-            system_prompt = """당신은 도움이 되는 AI 어시스턴트입니다. 이전 대화 내용을 바탕으로 대화를 이어가주세요.
-이전 대화 내용:
-{context}
+def extract_text_from_pdf(file):
+    reader = PdfReader(file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() or ""
+    return text
 
-현재 사용자 메시지: {prompt}"""
+def extract_text_from_docx(file):
+    doc = docx.Document(file)
+    return "\n".join([para.text for para in doc.paragraphs])
 
-        # LangChain Ollama 모델 초기화
-        llm = Ollama(
-            base_url=self.base_url,
-            model=model,
-            callback_manager=self.callback_manager
-        )
+def extract_text_from_excel(file):
+    df = pd.read_excel(file)
+    return df.to_string(index=False)
 
-        # 프롬프트 템플릿 설정
-        prompt_template = PromptTemplate(
-            input_variables=["context", "prompt"],
-            template=system_prompt
-        )
-
-        # 대화 메모리 설정
-        memory = ConversationBufferMemory(
-            memory_key="context",
-            return_messages=True
-        )
-
-        # LangChain 체인 생성
-        chain = LLMChain(
-            llm=llm,
-            prompt=prompt_template,
-            memory=memory
-        )
-
-        # 응답 생성
-        response = chain.run(context=context, prompt=prompt)
-        
-        # 어시스턴트 응답을 대화 기록에 추가
-        conversation.add_message("assistant", response)
-        
-        # 대화 기록이 너무 길어지면 최근 메시지만 유지
-        conversation.truncate()
-        
-        return response
-    
-    def list_models(self) -> List[Dict[str, Any]]:
-        """사용 가능한 모델 목록 가져오기"""
-        response = requests.get(f"{self.base_url}/api/tags")
+def generate_response(prompt, image=None):
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "stream": False
+    }
+    if image:
+        payload["images"] = [encode_image_to_base64(image)]
+    try:
+        response = requests.post(OLLAMA_API_URL, json=payload)
         response.raise_for_status()
-        return response.json()["models"]
-    
-    def pull_model(self, model_name: str) -> Dict[str, Any]:
-        """모델 다운로드"""
-        response = requests.post(
-            f"{self.base_url}/api/pull",
-            json={"name": model_name}
-        )
-        response.raise_for_status()
-        return response.json()
-    
-    def delete_model(self, model_name: str) -> Dict[str, Any]:
-        """모델 삭제"""
-        response = requests.delete(
-            f"{self.base_url}/api/delete",
-            json={"name": model_name}
-        )
-        response.raise_for_status()
-        return response.json() 
+        return response.json()["response"]
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+st.set_page_config(page_title="On-Device 개인정보 가드레일 시스템", layout="wide")
+st.title("🔒 On-Device 개인정보 가드레일 시스템 ")
+
+with st.sidebar:
+    st.header("📁 파일 업로드")
+    uploaded_file = st.file_uploader(
+        "이미지, PDF, DOCX, Excel, TXT 파일을 업로드하세요",
+        type=["jpg", "jpeg", "png", "pdf", "docx", "xlsx", "txt"]
+    )
+
+    st.markdown("---")
+    st.info("또는 아래에서 직접 텍스트를 입력할 수 있습니다.")
+
+user_text = ""
+image = None
+
+if uploaded_file is not None:
+    filetype = uploaded_file.type
+    filename = uploaded_file.name.lower()
+    if filetype.startswith("image/"):
+        image = Image.open(uploaded_file)
+        st.image(image, caption="업로드된 이미지", use_column_width=True)
+    elif filename.endswith(".pdf"):
+        user_text = extract_text_from_pdf(uploaded_file)
+        st.text_area("PDF에서 추출된 텍스트", user_text, height=200)
+    elif filename.endswith(".docx"):
+        user_text = extract_text_from_docx(uploaded_file)
+        st.text_area("DOCX에서 추출된 텍스트", user_text, height=200)
+    elif filename.endswith(".xlsx"):
+        user_text = extract_text_from_excel(uploaded_file)
+        st.text_area("Excel에서 추출된 텍스트", user_text, height=200)
+    elif filename.endswith(".txt"):
+        user_text = uploaded_file.read().decode("utf-8")
+        st.text_area("TXT 파일 내용", user_text, height=200)
+    else:
+        st.error("지원하지 않는 파일 형식입니다.")
+
+if not user_text and not image:
+    user_text = st.text_area("직접 텍스트 입력", "", height=200)
+
+if st.button("🚀 개인정보 포함여부 판별"):
+    if not user_text and not image:
+        st.warning("분석할 텍스트 또는 이미지를 입력/업로드하세요.")
+    else:
+        # 프롬프트 구성
+        prompt = f"""다음은 개인정보의 정의와 예시입니다:
+{PERSONAL_INFO_CONTEXT}
+
+아래 입력(텍스트 또는 이미지)에 개인정보가 포함되어 있으면 '포함됨', 포함되어 있지 않으면 '포함되지 않음'이라고만 답하세요.
+
+입력:
+{user_text if user_text else '[이미지 첨부]'}
+"""
+        with st.spinner("분석 중..."):
+            result = generate_response(prompt, image)
+        if "포함됨" in result:
+            st.error("🚨 개인정보가 포함되어 있습니다!")
+        elif "포함되지 않음" in result:
+            st.success("✅ 개인정보가 포함되어 있지 않습니다!")
+        else:
+            st.warning("⚠️ 판별 결과를 확인할 수 없습니다.")
+        st.markdown("**결과:**")
+        st.code(result)
+
+st.markdown("---")
+st.markdown("""
+- 이미지, PDF, DOCX, Excel, 텍스트 모두 지원
+- Local sLLM 모델이 실행 중이어야 함
+- 판별 기준: 이름, 연락처, 이메일, 주소, 계좌번호 등
+""") 
