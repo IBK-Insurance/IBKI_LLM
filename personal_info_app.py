@@ -165,12 +165,59 @@ col1, col2 = st.columns([1, 1])
 
 with col1:
     st.header("📄 텍스트 입력")
-    user_text = ""
+    # 텍스트 입력창은 항상 표시
+    user_text = st.text_area(
+        "직접 텍스트를 입력하세요",
+        height=300,
+        placeholder="개인정보 포함여부를 확인할 텍스트를 입력하세요...",
+        key="independent_text_input"
+    )
+    # 텍스트 개인정보 판별 버튼 (텍스트 입력 아래에만)
+    if st.button("🚀 텍스트 개인정보 포함여부 판별", key="text_check_btn_only"):
+        if user_text and user_text.strip():
+            with st.spinner("분석 중..."):
+                text_result = check_personal_info(user_text.strip())
+            if "포함됨" in text_result:
+                st.error("🚨 개인정보가 포함되어 있습니다!")
+                st.markdown("**결과:** 포함됨")
+                details = text_result.replace("포함됨", "").strip()
+                if details:
+                    with st.expander("🔎 포함된 개인정보 내용 보기", expanded=True):
+                        st.text_area("포함된 개인정보", details, height=150, disabled=True)
+            elif "포함되지 않음" in text_result:
+                st.success("✅ 개인정보가 포함되어 있지 않습니다!")
+                st.markdown("**결과:** 포함되지 않음")
+                # ChatGPT API 자동 호출
+                chatgpt_response = None
+                if openai.api_key:
+                    st.session_state["chat_history"].append({"role": "user", "content": user_text.strip()})
+                    st.info("ChatGPT API 호출 준비 중...")
+                    print("[DEBUG] ChatGPT API 호출 전: ", user_text.strip())
+                    logging.info(f"[DEBUG] ChatGPT API 호출 전: {user_text.strip()}")
+                    with st.spinner("ChatGPT에 질의 중..."):
+                        chatgpt_response = ask_chatgpt(user_text.strip(), openai.api_key, history=st.session_state["chat_history"])
+                    st.info("ChatGPT API 호출 완료!")
+                    print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
+                    logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
+                    if chatgpt_response.startswith("OpenAI API 오류:"):
+                        st.session_state["chat_history"].append({"role": "error", "content": chatgpt_response})
+                    else:
+                        st.session_state["chat_history"].append({"role": "assistant", "content": chatgpt_response})
+                else:
+                    st.warning("환경설정 파일(.env)에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
+                if chatgpt_response:
+                    with st.expander("💬 ChatGPT 응답 (분석 결과)", expanded=True):
+                        st.text_area("ChatGPT 응답", chatgpt_response, height=200, disabled=True)
+            else:
+                st.warning("⚠️ 판별 결과를 확인할 수 없습니다.")
+                st.markdown(f"**결과:** {text_result}")
+        else:
+            st.warning("⚠️ 분석할 텍스트가 없습니다.")
+    # 파일 업로드 및 이미지 추출은 별도
     user_image = None
     file_type = None
     image_extracted_text = None  # 이미지에서 추출된 텍스트
-    
-    if uploaded_file is not None:
+    if 'uploaded_file' in locals() and uploaded_file is not None:
         if uploaded_file.type == "application/pdf":
             user_text = extract_text_from_pdf(uploaded_file)
             file_type = "text"
@@ -183,31 +230,66 @@ with col1:
         elif uploaded_file.type in ["image/png", "image/jpeg", "image/jpg"]:
             user_image = Image.open(uploaded_file)
             file_type = "image"
-            # 이미지에서 텍스트 추출 (LLM 활용)
             with st.spinner("이미지에서 텍스트 추출 중..."):
                 image_extracted_text = extract_text_from_image_llm(user_image)
         else:
             st.error("지원하지 않는 파일 형식입니다.")
             user_text = ""
             file_type = None
-    else:
-        user_text = st.text_area(
-            "직접 텍스트를 입력하세요",
-            height=300,
-            placeholder="개인정보 포함여부를 확인할 텍스트를 입력하세요..."
-        )
-        file_type = "text" if user_text else None
-    
     # 텍스트 미리보기 (파일 업로드 시)
-    if uploaded_file is not None and user_text:
+    if 'uploaded_file' in locals() and uploaded_file is not None and user_text:
         with st.expander("📋 추출된 텍스트 미리보기", expanded=False):
             st.text_area("텍스트", user_text, height=200, disabled=True)
-    if uploaded_file is not None and user_image is not None:
+    if 'uploaded_file' in locals() and uploaded_file is not None and user_image is not None:
         with st.expander("🖼️ 업로드된 이미지 미리보기", expanded=False):
-            st.image(user_image, caption="업로드 이미지", use_column_width=True)
+            st.image(user_image, caption="업로드 이미지", use_container_width=True)
         if image_extracted_text:
             with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
                 st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True)
+    # 이미지 개인정보 판별 버튼 (이미지 업로드/미리보기 아래에만)
+    if user_image is not None:
+        if st.button("🚀 이미지 개인정보 포함여부 판별", key="image_check_btn_only"):
+            with st.spinner("이미지에서 텍스트 추출 및 분석 중..."):
+                image_result = check_personal_info_image(user_image)
+                image_extracted_text = extract_text_from_image_llm(user_image)
+            if image_extracted_text:
+                with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
+                    st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True)
+            if "포함됨" in image_result:
+                st.error("🚨 개인정보가 포함되어 있습니다!")
+                st.markdown("**결과:** 포함됨")
+                details = image_result.replace("포함됨", "").strip()
+                if details:
+                    with st.expander("🔎 포함된 개인정보 내용 보기", expanded=True):
+                        st.text_area("포함된 개인정보", details, height=150, disabled=True)
+            elif "포함되지 않음" in image_result:
+                st.success("✅ 개인정보가 포함되어 있지 않습니다!")
+                st.markdown("**결과:** 포함되지 않음")
+                # ChatGPT API 자동 호출
+                chatgpt_response = None
+                if openai.api_key and image_extracted_text:
+                    st.session_state["chat_history"].append({"role": "user", "content": image_extracted_text})
+                    st.info("ChatGPT API 호출 준비 중...")
+                    print("[DEBUG] ChatGPT API 호출 전: ", image_extracted_text)
+                    logging.info(f"[DEBUG] ChatGPT API 호출 전: {image_extracted_text}")
+                    with st.spinner("ChatGPT에 질의 중..."):
+                        chatgpt_response = ask_chatgpt(image_extracted_text, openai.api_key, history=st.session_state["chat_history"])
+                    st.info("ChatGPT API 호출 완료!")
+                    print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
+                    logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
+                    if chatgpt_response.startswith("OpenAI API 오류:"):
+                        st.session_state["chat_history"].append({"role": "error", "content": chatgpt_response})
+                    else:
+                        st.session_state["chat_history"].append({"role": "assistant", "content": chatgpt_response})
+                elif not openai.api_key:
+                    st.warning("환경설정 파일(.env)에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
+                # ChatGPT 응답을 분석 결과 영역에도 바로 출력
+                if chatgpt_response:
+                    with st.expander("💬 ChatGPT 응답 (분석 결과)", expanded=True):
+                        st.text_area("ChatGPT 응답", chatgpt_response, height=200, disabled=True)
+            else:
+                st.warning("⚠️ 판별 결과를 확인할 수 없습니다.")
+                st.markdown(f"**결과:** {image_result}")
 
 # --- ChatGPT 독립 대화 DIV (항상 표시) ---
 st.markdown("---")
