@@ -7,6 +7,14 @@ from langchain.llms import Ollama
 from PIL import Image  # 이미지 처리를 위해 추가
 import io
 import base64
+import openai
+import os
+from dotenv import load_dotenv
+import logging
+
+# 환경설정 파일(.env)에서 API 키 로드
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # 페이지 설정
 st.set_page_config(
@@ -109,6 +117,26 @@ def extract_text_from_image_llm(image: Image.Image):
             return "오류 발생"
     return "시스템 초기화 실패"
 
+def ask_chatgpt(query, openai_api_key):
+    print("[DEBUG] ask_chatgpt 진입, query:", query)
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": query}],
+            api_key=openai_api_key,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        print("[DEBUG] ask_chatgpt 응답:", response)
+        return response.choices[0].message.content
+    except Exception as e:
+        print("[DEBUG] ask_chatgpt 오류:", str(e))
+        return f"OpenAI API 오류: {str(e)}"
+
+# 대화 히스토리 초기화
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+
 # 메인 UI
 st.title("🔒 IBKI 개인정보 가드레일 시스템")
 st.markdown("---")
@@ -136,7 +164,7 @@ with col1:
     user_image = None
     file_type = None
     image_extracted_text = None  # 이미지에서 추출된 텍스트
-
+    
     if uploaded_file is not None:
         if uploaded_file.type == "application/pdf":
             user_text = extract_text_from_pdf(uploaded_file)
@@ -176,22 +204,82 @@ with col1:
             with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
                 st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True)
 
+# --- ChatGPT 독립 대화 DIV (항상 표시) ---
+st.markdown("---")
+st.subheader("💬 ChatGPT 대화 (독립)")
+
+user_chat_input = st.text_input("ChatGPT에 질문하기 (항상 가능)", key="chatgpt_input_always")
+if st.button("ChatGPT로 전송", key="chatgpt_send_btn_always") and user_chat_input.strip():
+    st.session_state["chat_history"].append({"role": "user", "content": user_chat_input.strip()})
+    st.info("ChatGPT API 호출 준비 중...")
+    print("[DEBUG] ChatGPT API 호출 전: ", user_chat_input)
+    logging.info(f"[DEBUG] ChatGPT API 호출 전: {user_chat_input}")
+    with st.spinner("ChatGPT에 질의 중..."):
+        chatgpt_response = ask_chatgpt(user_chat_input.strip(), openai.api_key)
+    st.info("ChatGPT API 호출 완료!")
+    print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
+    logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
+    if chatgpt_response.startswith("OpenAI API 오류:"):
+        st.session_state["chat_history"].append({"role": "error", "content": chatgpt_response})
+    else:
+        st.session_state["chat_history"].append({"role": "assistant", "content": chatgpt_response})
+
+# 대화 히스토리 출력 (항상)
+history = st.session_state["chat_history"]
+i = 0
+while i < len(history):
+    msg = history[i]
+    if msg["role"] == "user":
+        st.markdown(
+            f"<div style='background:#e6f7ff;padding:8px;border-radius:6px;margin-bottom:4px;color:#0050b3'><b>🙋 사용자:</b><br>{msg['content']}</div>",
+            unsafe_allow_html=True
+        )
+        if i + 1 < len(history) and history[i + 1]["role"] in ("assistant", "error"):
+            next_msg = history[i + 1]
+            if next_msg["role"] == "assistant":
+                st.markdown(
+                    f"<div style='background:#f6ffed;padding:8px;border-radius:6px;margin-bottom:12px;color:#237804'><b>🤖 ChatGPT:</b><br>{next_msg['content']}</div>",
+                    unsafe_allow_html=True
+                )
+            elif next_msg["role"] == "error":
+                st.markdown(
+                    f"<div style='background:#fff1f0;padding:8px;border-radius:6px;margin-bottom:12px;color:#a8071a'><b>❌ 오류:</b><br>{next_msg['content']}</div>",
+                    unsafe_allow_html=True
+                )
+            i += 2
+        else:
+            i += 1
+    else:
+        if msg["role"] == "assistant":
+            st.markdown(
+                f"<div style='background:#f6ffed;padding:8px;border-radius:6px;margin-bottom:12px;color:#237804'><b>🤖 ChatGPT:</b><br>{msg['content']}</div>",
+                unsafe_allow_html=True
+            )
+        elif msg["role"] == "error":
+            st.markdown(
+                f"<div style='background:#fff1f0;padding:8px;border-radius:6px;margin-bottom:12px;color:#a8071a'><b>❌ 오류:</b><br>{msg['content']}</div>",
+                unsafe_allow_html=True
+            )
+        i += 1
+
 with col2:
-    st.header("🔍 분석 결과")
+    st.header("💬 분석 결과")
     if st.button("🚀 개인정보 포함여부 판별", type="primary", use_container_width=True):
         if (file_type == "text" and user_text and user_text.strip()) or (file_type == "image" and user_image is not None):
             with st.spinner("분석 중..."):
                 if file_type == "text":
                     result = check_personal_info(user_text.strip())
+                    query_for_chatgpt = user_text.strip()
                 elif file_type == "image":
                     result = check_personal_info_image(user_image)
+                    query_for_chatgpt = extract_text_from_image_llm(user_image)
                 else:
                     result = "분석할 데이터가 없습니다."
+                    query_for_chatgpt = ""
             # 결과 표시
             if "포함됨" in result:
                 st.error("🚨 개인정보가 포함되어 있습니다!")
                 st.markdown("**결과:** 포함됨")
-                # 관련 내용 추출 및 출력
                 details = result.replace("포함됨", "").strip()
                 if details:
                     with st.expander("🔎 포함된 개인정보 내용 보기", expanded=True):
@@ -199,6 +287,28 @@ with col2:
             elif "포함되지 않음" in result:
                 st.success("✅ 개인정보가 포함되어 있지 않습니다!")
                 st.markdown("**결과:** 포함되지 않음")
+                # ChatGPT API 자동 호출 (질의/응답 히스토리에 추가)
+                chatgpt_response = None
+                if openai.api_key and query_for_chatgpt:
+                    st.session_state["chat_history"].append({"role": "user", "content": query_for_chatgpt})
+                    st.info("ChatGPT API 호출 준비 중...")
+                    print("[DEBUG] ChatGPT API 호출 전: ", query_for_chatgpt)
+                    logging.info(f"[DEBUG] ChatGPT API 호출 전: {query_for_chatgpt}")
+                    with st.spinner("ChatGPT에 질의 중..."):
+                        chatgpt_response = ask_chatgpt(query_for_chatgpt, openai.api_key)
+                    st.info("ChatGPT API 호출 완료!")
+                    print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
+                    logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
+                    if chatgpt_response.startswith("OpenAI API 오류:"):
+                        st.session_state["chat_history"].append({"role": "error", "content": chatgpt_response})
+                    else:
+                        st.session_state["chat_history"].append({"role": "assistant", "content": chatgpt_response})
+                elif not openai.api_key:
+                    st.warning("환경설정 파일(.env)에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
+                # ChatGPT 응답을 분석 결과 영역에도 바로 출력
+                if chatgpt_response:
+                    with st.expander("💬 ChatGPT 응답 (분석 결과)", expanded=True):
+                        st.text_area("ChatGPT 응답", chatgpt_response, height=200, disabled=True)
             else:
                 st.warning("⚠️ 판별 결과를 확인할 수 없습니다.")
                 st.markdown(f"**결과:** {result}")
