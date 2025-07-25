@@ -10,7 +10,7 @@ import base64
 
 # 페이지 설정
 st.set_page_config(
-    page_title="개인정보 포함여부 판별기",
+    page_title="IBKI 개인정보 가드레일 시스템",
     page_icon="🔒",
     layout="wide"
 )
@@ -61,7 +61,6 @@ def check_personal_info(text):
     llm = initialize_llm()
     if llm:
         try:
-            # 개인정보 판별을 위한 프롬프트
             prompt = f"""
 다음 텍스트에 개인정보가 포함되어 있는지 판별해주세요.
 
@@ -70,7 +69,8 @@ def check_personal_info(text):
 분석할 텍스트:
 {text}
 
-위 텍스트에 개인정보가 포함되어 있으면 '포함됨', 포함되어 있지 않으면 '포함되지 않음'이라고만 답하세요.
+위 텍스트에 개인정보가 포함되어 있으면 '포함됨'이라고 답하고, 어떤 개인정보가 포함되어 있는지 구체적으로 예시(문장/항목)를 함께 출력하세요.
+포함되어 있지 않으면 '포함되지 않음'이라고만 답하세요.
 """
             result = llm.invoke(prompt)
             return result
@@ -110,7 +110,7 @@ def extract_text_from_image_llm(image: Image.Image):
     return "시스템 초기화 실패"
 
 # 메인 UI
-st.title("🔒 개인정보 포함여부 판별기")
+st.title("🔒 IBKI 개인정보 가드레일 시스템")
 st.markdown("---")
 
 # 사이드바 - 파일 업로드
@@ -191,6 +191,11 @@ with col2:
             if "포함됨" in result:
                 st.error("🚨 개인정보가 포함되어 있습니다!")
                 st.markdown("**결과:** 포함됨")
+                # 관련 내용 추출 및 출력
+                details = result.replace("포함됨", "").strip()
+                if details:
+                    with st.expander("🔎 포함된 개인정보 내용 보기", expanded=True):
+                        st.text_area("포함된 개인정보", details, height=150, disabled=True)
             elif "포함되지 않음" in result:
                 st.success("✅ 개인정보가 포함되어 있지 않습니다!")
                 st.markdown("**결과:** 포함되지 않음")
