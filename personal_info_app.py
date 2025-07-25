@@ -117,12 +117,17 @@ def extract_text_from_image_llm(image: Image.Image):
             return "오류 발생"
     return "시스템 초기화 실패"
 
-def ask_chatgpt(query, openai_api_key):
+def ask_chatgpt(query, openai_api_key, history=None):
     print("[DEBUG] ask_chatgpt 진입, query:", query)
     try:
+        # 대화 히스토리 준비
+        messages = []
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": query})
         response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": query}],
+            messages=messages,
             api_key=openai_api_key,
             max_tokens=1024,
             temperature=0.7,
@@ -215,7 +220,7 @@ if st.button("ChatGPT로 전송", key="chatgpt_send_btn_always") and user_chat_i
     print("[DEBUG] ChatGPT API 호출 전: ", user_chat_input)
     logging.info(f"[DEBUG] ChatGPT API 호출 전: {user_chat_input}")
     with st.spinner("ChatGPT에 질의 중..."):
-        chatgpt_response = ask_chatgpt(user_chat_input.strip(), openai.api_key)
+        chatgpt_response = ask_chatgpt(user_chat_input.strip(), openai.api_key, history=st.session_state["chat_history"])
     st.info("ChatGPT API 호출 완료!")
     print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
     logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
@@ -295,7 +300,7 @@ with col2:
                     print("[DEBUG] ChatGPT API 호출 전: ", query_for_chatgpt)
                     logging.info(f"[DEBUG] ChatGPT API 호출 전: {query_for_chatgpt}")
                     with st.spinner("ChatGPT에 질의 중..."):
-                        chatgpt_response = ask_chatgpt(query_for_chatgpt, openai.api_key)
+                        chatgpt_response = ask_chatgpt(query_for_chatgpt, openai.api_key, history=st.session_state["chat_history"])
                     st.info("ChatGPT API 호출 완료!")
                     print("[DEBUG] ChatGPT API 호출 후: ", chatgpt_response)
                     logging.info(f"[DEBUG] ChatGPT API 호출 후: {chatgpt_response}")
