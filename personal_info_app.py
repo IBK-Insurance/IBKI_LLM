@@ -3,11 +3,7 @@ from PyPDF2 import PdfReader
 import docx
 import tempfile
 import os
-from langchain.embeddings import OllamaEmbeddings
-from langchain.vectorstores import Chroma
 from langchain.llms import Ollama
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
 
 # 페이지 설정
 st.set_page_config(
@@ -16,49 +12,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# 개인정보 정의 문서
-personal_info_docs = [
-    "개인정보란 이름, 주민등록번호, 연락처, 이메일 등 개인을 식별할 수 있는 정보를 의미합니다.",
-    "개인정보에는 주소, 전화번호, 계좌번호, 신용카드번호, 생년월일, 성별 등이 포함될 수 있습니다.",
-    "개인정보 보호법에 따라 개인을 식별할 수 있는 모든 정보는 보호 대상입니다.",
-    "개인정보의 예시: 김철수, 010-1234-5678, kim@email.com, 서울시 강남구, 123-45-67890",
-    "개인정보가 아닌 것: 일반적인 직업명, 나이대, 지역명(시/도 단위), 성별 등"
-]
+# 개인정보 판별 기준
+PERSONAL_INFO_CRITERIA = """
+개인정보의 정의:
+- 이름, 주민등록번호, 연락처, 이메일, 주소, 계좌번호, 신용카드번호, 생년월일 등 개인을 식별할 수 있는 정보
+- 개인정보 보호법에 따라 개인을 식별할 수 있는 모든 정보
+
+개인정보가 아닌 것:
+- 일반적인 직업명, 나이대, 지역명(시/도 단위), 성별 등
+"""
 
 @st.cache_resource
-def initialize_rag_system():
-    """RAG 시스템 초기화 (캐시됨)"""
+def initialize_llm():
+    """LLM 초기화 (캐시됨)"""
     try:
-        # 임시 디렉토리로 Chroma 벡터스토어 생성
-        chroma_persist_dir = tempfile.mkdtemp()
-        embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url="http://localhost:11434")
-        vectorstore = Chroma.from_texts(personal_info_docs, embedding=embeddings, persist_directory=chroma_persist_dir)
-        
-        # Retriever 생성
-        retriever = vectorstore.as_retriever()
-        
-        # 프롬프트 템플릿
-        prompt_template = PromptTemplate(
-            input_variables=["context", "question"],
-            template=(
-                "다음은 개인정보의 정의와 예시입니다:\n"
-                "{context}\n\n"
-                "질문: {question}\n"
-                "위의 정의와 예시를 참고하여, 질문에 개인정보가 포함되어 있으면 '포함됨', 포함되어 있지 않으면 '포함되지 않음'이라고만 답하세요."
-            )
-        )
-        
-        # LLM 및 QA 체인
-        llm = Ollama(model="gemma3", base_url="http://localhost:11434")
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            retriever=retriever,
-            chain_type_kwargs={"prompt": prompt_template}
-        )
-        
-        return qa_chain
+        llm = Ollama(model="qwen2.5vl:7b", base_url="http://localhost:11434")
+        return llm
     except Exception as e:
-        st.error(f"RAG 시스템 초기화 실패: {str(e)}")
+        st.error(f"LLM 초기화 실패: {str(e)}")
         return None
 
 def extract_text_from_pdf(file):
@@ -84,10 +55,27 @@ def extract_text_from_docx(file):
 
 def check_personal_info(text):
     """개인정보 포함여부 판별"""
-    qa_chain = initialize_rag_system()
-    if qa_chain:
+    llm = initialize_llm()
+    if llm:
         try:
-            return qa_chain.run(text)
+            # 개인정보 판별을 위한 프롬프트
+            prompt = f"""
+다음 텍스트에 개인정보가 포함되어 있는지 판별해주세요.
+
+개인정보의 정의:
+- 이름, 주민등록번호, 연락처, 이메일, 주소, 계좌번호, 신용카드번호, 생년월일 등 개인을 식별할 수 있는 정보
+- 개인정보 보호법에 따라 개인을 식별할 수 있는 모든 정보
+
+개인정보가 아닌 것:
+- 일반적인 직업명, 나이대, 지역명(시/도 단위), 성별 등
+
+분석할 텍스트:
+{text}
+
+위 텍스트에 개인정보가 포함되어 있으면 '포함됨', 포함되어 있지 않으면 '포함되지 않음'이라고만 답하세요.
+"""
+            result = llm.invoke(prompt)
+            return result
         except Exception as e:
             st.error(f"판별 중 오류 발생: {str(e)}")
             return "오류 발생"
