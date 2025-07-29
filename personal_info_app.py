@@ -244,17 +244,20 @@ with col1:
         with st.expander("🖼️ 업로드된 이미지 미리보기", expanded=False):
             st.image(user_image, caption="업로드 이미지", use_container_width=True)
         if image_extracted_text:
+            # 이미지 업로드 미리보기 영역
             with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
-                st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True)
-    # 이미지 개인정보 판별 버튼 (이미지 업로드/미리보기 아래에만)
+                st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True, key="image_extracted_text_area_preview")
+
+# 이미지 개인정보 판별 버튼 (이미지 업로드/미리보기 아래에만)
     if user_image is not None:
         if st.button("🚀 이미지 개인정보 포함여부 판별", key="image_check_btn_only"):
             with st.spinner("이미지에서 텍스트 추출 및 분석 중..."):
                 image_result = check_personal_info_image(user_image)
                 image_extracted_text = extract_text_from_image_llm(user_image)
             if image_extracted_text:
+                # 판별 결과 영역
                 with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
-                    st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True)
+                    st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True, key="image_extracted_text_area_result")
             if "포함됨" in image_result:
                 st.error("🚨 개인정보가 포함되어 있습니다!")
                 st.markdown("**결과:** 포함됨")
