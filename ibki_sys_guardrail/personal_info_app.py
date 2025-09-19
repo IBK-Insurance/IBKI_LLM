@@ -1,5 +1,12 @@
 import streamlit as st
 import logging
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so absolute package imports work under Streamlit
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Client 모듈 import
 from ibki_sys_guardrail.client.text_input_section import render_text_input_section

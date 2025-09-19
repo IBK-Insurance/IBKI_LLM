@@ -7,11 +7,13 @@
 import streamlit as st
 import requests
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 def load_environment():
-    """환경설정 파일(.env)에서 API 키 로드"""
-    load_dotenv()
+    """환경설정 파일(ibki_sys_guardrail/.env)에서 API 키 로드"""
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    load_dotenv(dotenv_path=env_path)
     return os.getenv("OPENAI_API_KEY")
 
 def check_ollama_connection():

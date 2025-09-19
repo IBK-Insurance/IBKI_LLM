@@ -1,1 +1,1 @@
-# Server module for IBKI Personal Information Guardrail System
+# Server package

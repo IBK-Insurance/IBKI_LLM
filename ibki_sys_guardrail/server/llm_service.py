@@ -6,11 +6,14 @@ LLM 서비스 모듈
 """
 
 import streamlit as st
-from langchain.llms import Ollama
+from langchain_community.llms import Ollama
 from PIL import Image
 import io
 import base64
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
 # 개인정보 판별 기준
 PERSONAL_INFO_CRITERIA = """
@@ -22,19 +25,41 @@ PERSONAL_INFO_CRITERIA = """
 - 일반적인 직업명, 나이대, 지역명(시/도 단위), 성별 등
 """
 
+def _load_ollama_env():
+    """ibki_sys_guardrail/.env에서 LLM 설정 로드 후 (model, base_url) 반환"""
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    load_dotenv(dotenv_path=env_path)
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    text_model = os.getenv("TEXT_LLM_MODEL", "gpt-oss:20b")
+    vision_model = os.getenv("VISION_LLM_MODEL", "qwen2.5vl:7b")
+    return text_model, vision_model, base_url
+
+
 @st.cache_resource
-def initialize_llm():
-    """LLM 초기화 (캐시됨)"""
+def initialize_text_llm():
+    """텍스트 전용 LLM 초기화 (환경변수 TEXT_LLM_MODEL)"""
     try:
-        llm = Ollama(model="qwen2.5vl:7b", base_url="http://localhost:11434")
+        text_model, _, base_url = _load_ollama_env()
+        llm = Ollama(model=text_model, base_url=base_url)
         return llm
     except Exception as e:
-        st.error(f"LLM 초기화 실패: {str(e)}")
+        st.error(f"텍스트 LLM 초기화 실패: {str(e)}")
+        return None
+
+@st.cache_resource
+def initialize_vision_llm():
+    """멀티모달/비전 LLM 초기화 (환경변수 VISION_LLM_MODEL)"""
+    try:
+        _, vision_model, base_url = _load_ollama_env()
+        llm = Ollama(model=vision_model, base_url=base_url)
+        return llm
+    except Exception as e:
+        st.error(f"비전 LLM 초기화 실패: {str(e)}")
         return None
 
 def check_personal_info(text):
     """개인정보 포함여부 판별"""
-    llm = initialize_llm()
+    llm = initialize_text_llm()
     if llm:
         try:
             prompt = f"""
@@ -57,7 +82,7 @@ def check_personal_info(text):
 
 def extract_text_from_image_llm(image: Image.Image):
     """이미지에서 텍스트 추출 (멀티모달 LLM 활용)"""
-    llm = initialize_llm()
+    llm = initialize_vision_llm()
     if llm:
         try:
             prompt = (
