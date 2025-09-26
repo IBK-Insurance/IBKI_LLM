@@ -40,10 +40,20 @@ def render_image_input_section(openai_api_key, chat_history):
     )
     
     if uploaded_image_file is not None:
+        # 업로드 파일의 고유 키 생성 (이름 + 크기 기준)
+        file_key = f"{uploaded_image_file.name}:{getattr(uploaded_image_file, 'size', 0)}"
+        if "processed_images" not in st.session_state:
+            st.session_state["processed_images"] = set()
+
         from PIL import Image
         user_image = Image.open(uploaded_image_file)
         st.image(user_image, caption="업로드 이미지", use_container_width=True)
         
+        # 이미 처리된 파일은 재분석 방지
+        if file_key in st.session_state["processed_images"]:
+            st.info("이 이미지는 이미 분석되었습니다.")
+            return
+
         # 이미지에서 텍스트 추출
         with st.spinner("이미지에서 텍스트 추출 중..."):
             image_extracted_text = extract_text_from_image_llm(user_image)
@@ -51,9 +61,8 @@ def render_image_input_section(openai_api_key, chat_history):
         if image_extracted_text:
             with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
                 st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True, key="image_extracted_text_area_preview")
-        
-        # 대화 기록에 사용자 질의 즉시 반영 (이미지에서 추출된 텍스트)
-        if image_extracted_text:
+            
+            # 대화 기록에 사용자 질의 즉시 반영 (중복 방지)
             if not chat_history or chat_history[-1].get("role") != "user" or chat_history[-1].get("content") != image_extracted_text:
                 add_to_chat_history(chat_history, "user", image_extracted_text)
 
@@ -68,7 +77,6 @@ def render_image_input_section(openai_api_key, chat_history):
         if "포함되지 않음" in image_result:
             chatgpt_response = None
             if openai_api_key and image_extracted_text:
-                add_to_chat_history(chat_history, "user", image_extracted_text)
                 st.info("ChatGPT API 호출 준비 중...")
                 print("[DEBUG] ChatGPT API 호출 전: ", image_extracted_text)
                 logging.info(f"[DEBUG] ChatGPT API 호출 전: {image_extracted_text}")
@@ -88,5 +96,5 @@ def render_image_input_section(openai_api_key, chat_history):
             elif not openai_api_key:
                 st.warning("환경설정 파일(.env)에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
 
-        # 사이드바 대화기록 탭 갱신을 위해 다시 렌더링
-        st.rerun()
+        # 처리 완료 표시(재분석 방지)
+        st.session_state["processed_images"].add(file_key)
