@@ -11,12 +11,32 @@ from ibki_sys_guardrail.client.ui_components import display_personal_info_result
 
 def render_image_input_section(openai_api_key, chat_history):
     """이미지 입력 섹션 렌더링"""
-    st.header("🖼️ 이미지 업로드 개인정보 판별")
+    st.markdown("""
+    <div class="input-section">
+        <h3 style="color: #1e40af; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+            🖼️ 파일도 함께 올려보세요! (선택사항)
+        </h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 파일 업로드 영역 스타일링
+    st.markdown("""
+    <div class="file-upload-area">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">📁</div>
+        <div style="font-weight: bold; color: #1e40af; margin-bottom: 0.5rem;">
+            파일을 여기로 끌어다 놓거나 클릭해주세요!
+        </div>
+        <div style="color: #6b7280; font-size: 0.9rem;">
+            PDF, Word, Excel, 이미지 파일을 지원해요 🐾
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     uploaded_image_file = st.file_uploader(
-        "이미지 파일(PNG, JPG, JPEG) 업로드",
+        "이미지 파일을 선택하세요",
         type=["png", "jpg", "jpeg"],
-        key="independent_image_uploader"
+        key="independent_image_uploader",
+        label_visibility="collapsed"
     )
     
     if uploaded_image_file is not None:
@@ -32,6 +52,11 @@ def render_image_input_section(openai_api_key, chat_history):
             with st.expander("🖼️ 이미지에서 추출된 텍스트 미리보기", expanded=False):
                 st.text_area("이미지 추출 텍스트", image_extracted_text, height=200, disabled=True, key="image_extracted_text_area_preview")
         
+        # 대화 기록에 사용자 질의 즉시 반영 (이미지에서 추출된 텍스트)
+        if image_extracted_text:
+            if not chat_history or chat_history[-1].get("role") != "user" or chat_history[-1].get("content") != image_extracted_text:
+                add_to_chat_history(chat_history, "user", image_extracted_text)
+
         # 이미지에서 개인정보 판별
         with st.spinner("이미지에서 텍스트 추출 및 분석 중..."):
             image_result = check_personal_info_image(user_image)
@@ -62,3 +87,6 @@ def render_image_input_section(openai_api_key, chat_history):
                 display_chatgpt_response(chatgpt_response, "분석 결과")
             elif not openai_api_key:
                 st.warning("환경설정 파일(.env)에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
+
+        # 사이드바 대화기록 탭 갱신을 위해 다시 렌더링
+        st.rerun()

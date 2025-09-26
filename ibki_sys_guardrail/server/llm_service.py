@@ -14,6 +14,7 @@ import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from ibki_sys_guardrail.server.pii_detector import detect, extract
 
 # 개인정보 판별 기준
 PERSONAL_INFO_CRITERIA = """
@@ -58,7 +59,37 @@ def initialize_vision_llm():
         return None
 
 def check_personal_info(text):
-    """개인정보 포함여부 판별"""
+    """개인정보 포함여부 판별 (정규식 패턴 우선, LLM 보조)"""
+    # 1단계: 정규식 패턴으로 개인정보 탐지
+    regex_matches = detect(text)
+    
+    if regex_matches:
+        # 정규식으로 개인정보가 탐지된 경우
+        detected_types = {}
+        for match in regex_matches:
+            pii_type = match["type"]
+            if pii_type not in detected_types:
+                detected_types[pii_type] = []
+            detected_types[pii_type].append(match["value"])
+        
+        # 탐지된 개인정보 유형별로 결과 구성
+        result_parts = ["포함됨"]
+        for pii_type, values in detected_types.items():
+            type_names = {
+                "rrn": "주민등록번호",
+                "name": "성명", 
+                "account": "계좌번호",
+                "phone": "전화번호",
+                "email": "이메일",
+                "address": "주소"
+            }
+            type_name = type_names.get(pii_type, pii_type)
+            unique_values = list(set(values))  # 중복 제거
+            result_parts.append(f"{type_name}: {', '.join(unique_values[:3])}")  # 최대 3개만 표시
+        
+        return "\n".join(result_parts)
+    
+    # 2단계: 정규식으로 탐지되지 않은 경우 LLM으로 추가 탐지
     llm = initialize_text_llm()
     if llm:
         try:
@@ -76,7 +107,7 @@ def check_personal_info(text):
             result = llm.invoke(prompt)
             return result
         except Exception as e:
-            st.error(f"판별 중 오류 발생: {str(e)}")
+            st.error(f"LLM 판별 중 오류 발생: {str(e)}")
             return "오류 발생"
     return "시스템 초기화 실패"
 
@@ -107,5 +138,5 @@ def check_personal_info_image(image: Image.Image):
     extracted_text = extract_text_from_image_llm(image)
     if not extracted_text or extracted_text.strip() in ["오류 발생", "시스템 초기화 실패", "텍스트 없음"]:
         return "이미지에서 개인정보를 판별할 텍스트를 추출하지 못했습니다."
-    # 2. 추출된 텍스트로 개인정보 판별
+    # 2. 추출된 텍스트로 개인정보 판별 (정규식 우선, LLM 보조)
     return check_personal_info(extracted_text)
